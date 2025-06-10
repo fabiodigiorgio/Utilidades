@@ -5,13 +5,20 @@ import matplotlib.patches as patches
 from matplotlib.lines import Line2D
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import os
 
 st.set_page_config(layout="wide", page_title="Atendimentos - Cards")
 st.title("📋 Visualização de Atendimentos")
 
 def carregar_planilha_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("oceanic-gecko-457816-t2-c2ccbb7db279.json", scope)
+    cred_path = os.getenv("GOOGLE_CREDENTIALS_PATH")
+
+    if not cred_path or not os.path.isfile(cred_path):
+        st.error("Arquivo de credenciais não encontrado. Defina a variável de ambiente GOOGLE_CREDENTIALS_PATH com o caminho completo do JSON.")
+        st.stop()
+
+    creds = ServiceAccountCredentials.from_json_keyfile_name(cred_path, scope)
     client = gspread.authorize(creds)
 
     planilha = client.open_by_key("1pdw-vQlg8G69aOXx0ObqO49BGWzK85tpXyJ9gvD6m0Q")
