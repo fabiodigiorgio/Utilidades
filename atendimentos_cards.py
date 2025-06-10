@@ -2,23 +2,23 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.lines import Line2D
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import os
+import json
 
 st.set_page_config(layout="wide", page_title="Atendimentos - Cards")
 st.title("📋 Visualização de Atendimentos")
 
 def carregar_planilha_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    cred_path = os.getenv("GOOGLE_CREDENTIALS_PATH")
 
-    if not cred_path or not os.path.isfile(cred_path):
-        st.error("Arquivo de credenciais não encontrado. Defina a variável de ambiente GOOGLE_CREDENTIALS_PATH com o caminho completo do JSON.")
+    try:
+        cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    except Exception as e:
+        st.error("Credencial Google não encontrada nos segredos. Verifique o painel de secrets no Streamlit Cloud.")
         st.stop()
 
-    creds = ServiceAccountCredentials.from_json_keyfile_name(cred_path, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(cred_dict, scope)
     client = gspread.authorize(creds)
 
     planilha = client.open_by_key("1pdw-vQlg8G69aOXx0ObqO49BGWzK85tpXyJ9gvD6m0Q")
