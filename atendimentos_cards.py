@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import textwrap
+from matplotlib.backends.backend_pdf import PdfPages
+from io import BytesIO
 
 st.set_page_config(layout="wide", page_title="Atendimentos - Cards")
 st.title("📋 Visualização de Atendimentos")
@@ -30,6 +32,39 @@ def carregar_planilha_google():
             headers_corrigidos.append(h)
     df = pd.DataFrame(conteudo, columns=headers_corrigidos)
     return df
+
+def gerar_pdf(cards):
+    buffer = BytesIO()
+    with PdfPages(buffer) as pdf:
+        for i in range(0, len(cards), 4):
+            fig, axs = plt.subplots(4, 1, figsize=(8.27, 11.69))  # A4 vertical
+            plt.subplots_adjust(hspace=0.8)
+            for ax, card in zip(axs, cards[i:i+4]):
+                ax.axis('off')
+                y = 1.0
+                lh = 0.045
+                x = 0.05
+                ax.text(x, y, card["nome"], fontsize=12, weight='bold', transform=ax.transAxes); y -= 0.06
+                ax.text(x, y, f"Data: {card['data']}  |  OS: {card['os']}", fontsize=10, transform=ax.transAxes); y -= lh
+                ax.text(x, y, f"Produto: {card['produto']}  |  Fabricante: {card['fabricante']}", fontsize=9, transform=ax.transAxes); y -= lh
+
+                defeito_wrapped = textwrap.fill(f"Defeito: {card['defeito']}", width=85)
+                for line in defeito_wrapped.split('\n'):
+                    ax.text(x, y, line, fontsize=9, color="brown", transform=ax.transAxes)
+                    y -= lh
+
+                endereco = f"Endereço: {card['endereco']}, Nº {card['numero']} - {card['bairro']}"
+                endereco_wrapped = textwrap.fill(endereco, width=85)
+                for line in endereco_wrapped.split('\n'):
+                    ax.text(x, y, line, fontsize=9, transform=ax.transAxes)
+                    y -= lh
+
+                ax.text(x, y, f"CEP: {card['cep']}  |  Compl: {card['complemento']}", fontsize=9, transform=ax.transAxes); y -= lh
+                ax.text(x, y, f"Contato: {card['contato']}", fontsize=9, color="blue", transform=ax.transAxes)
+            pdf.savefig(fig)
+            plt.close()
+    buffer.seek(0)
+    return buffer
 
 try:
     df_raw = carregar_planilha_google()
@@ -60,9 +95,9 @@ datas_unicas = sorted(df['Data de Entrada'].dropna().dt.date.unique())
 data_filtro = st.selectbox("Selecione uma data:", datas_unicas)
 df_filtrado = df[df['Data de Entrada'].dt.date == data_filtro]
 
-# Número total de atendimentos
 st.markdown(f"<h2 style='color: #2e86c1;'>Total de Atendimentos: {len(df_filtrado)}</h2>", unsafe_allow_html=True)
 
+cards = []
 for _, row in df_filtrado.iterrows():
     card = {
         "nome": row['Nome do Cliente'],
@@ -78,20 +113,40 @@ for _, row in df_filtrado.iterrows():
         "complemento": row['Complemento'],
         "contato": row['Contato']
     }
+    cards.append(card)
 
-    fig, ax = plt.subplots(figsize=(8, 5.5))
+    # Exibir na tela (mantendo características anteriores)
+    fig, ax = plt.subplots(figsize=(8, 5))
     ax.axis('off')
-    ax.add_patch(patches.Rectangle((0, 0), 1, 1, fill=True, color="#f9f9f9", transform=ax.transAxes))
+    y = 0.90
+    lh = 0.045
+    x = 0.05
 
-    y = 0.92
-    ax.text(0.02, y, f"{card['nome']}", fontsize=14, fontweight='bold', color="#222", transform=ax.transAxes); y -= 0.06
-    ax.text(0.02, y, f"Data: {card['data']}  |  OS: {card['os']}", fontsize=11, color="#333", transform=ax.transAxes); y -= 0.05
-    ax.text(0.02, y, f"Produto: {card['produto']}  |  Fabricante: {card['fabricante']}", fontsize=10, transform=ax.transAxes); y -= 0.045
-    ax.text(0.02, y, f"Defeito: {card['defeito']}", fontsize=10, color="#cc0000", transform=ax.transAxes); y -= 0.05
-    ax.text(0.02, y, f"Endereço: {card['endereco']}, Nº {card['numero']}  -  {card['bairro']}", fontsize=10, transform=ax.transAxes); y -= 0.045
-    ax.text(0.02, y, f"CEP: {card['cep']}  |  Compl: {card['complemento']}", fontsize=10, transform=ax.transAxes); y -= 0.045
-    ax.text(0.02, y, f"Contato: {card['contato']}", fontsize=10, color="#336699", transform=ax.transAxes)
+    ax.text(x, y, card["nome"], fontsize=14, fontweight='bold', color="#222", transform=ax.transAxes)
+    y -= 0.06
+    ax.text(x, y, f"Data: {card['data']}  |  OS: {card['os']}", fontsize=11, color="#333", transform=ax.transAxes)
+    y -= lh
+    ax.text(x, y, f"Produto: {card['produto']}  |  Fabricante: {card['fabricante']}", fontsize=10, transform=ax.transAxes)
+    y -= lh
 
-    ax.axhline(y=0.02, color="#bbbbbb", linestyle='-', linewidth=1, xmin=0.01, xmax=0.99)
+    defeito_wrapped = textwrap.fill(f"Defeito: {card['defeito']}", width=85)
+    for linha in defeito_wrapped.split("\n"):
+        ax.text(x, y, linha, fontsize=10, color="#cc0000", transform=ax.transAxes)
+        y -= lh
 
+    endereco_completo = f"Endereço: {card['endereco']}, Nº {card['numero']} - {card['bairro']}"
+    wrapped_endereco = textwrap.fill(endereco_completo, width=85)
+    for linha in wrapped_endereco.split("\n"):
+        ax.text(x, y, linha, fontsize=10, transform=ax.transAxes)
+        y -= lh
+
+    ax.text(x, y, f"CEP: {card['cep']}  |  Compl: {card['complemento']}", fontsize=10, transform=ax.transAxes)
+    y -= lh
+    ax.text(x, y, f"Contato:  {card['contato']}", fontsize=10, color="#336699", transform=ax.transAxes)
     st.pyplot(fig)
+    st.markdown("---")
+
+# Botão para exportar PDF
+if st.button("📄 Exportar PDF com 4 cards por página"):
+    pdf_file = gerar_pdf(cards)
+    st.download_button(label="📥 Baixar PDF", data=pdf_file, file_name="atendimentos_cards.pdf", mime="application/pdf")
