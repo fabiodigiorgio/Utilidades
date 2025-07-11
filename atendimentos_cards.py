@@ -72,7 +72,10 @@ except Exception as e:
     st.error(f"Erro ao carregar dados do Google Sheets: {e}")
     st.stop()
 
-coluna_data_entrada = df_raw.columns[17]
+coluna_data_entrada = next((col for col in df_raw.columns if col.strip().upper() == "DATA"), None)
+if coluna_data_entrada is None:
+    st.error("A coluna 'DATA' não foi encontrada.")
+    st.stop()
 colunas_esperadas = [
     coluna_data_entrada, 'ORDEM DE SERVIÇO', 'Fabricante', 'Produto', 'Defeito Relatado',
     'Nome Completo', 'Whatsapp/Celular', 'Endereço', 'Número', 'Bairro/Cidade', 'CEP', 'Complemento'
@@ -85,15 +88,21 @@ if colunas_faltando:
 
 df = df_raw[colunas_esperadas].copy()
 df.columns = [
-    'Data de Entrada', 'OS', 'Fabricante', 'Produto', 'Defeito',
+    'DATA.1', 'OS', 'Fabricante', 'Produto', 'Defeito',
     'Nome do Cliente', 'Contato', 'Endereço', 'Número', 'Bairro',
     'CEP', 'Complemento'
 ]
-df['Data de Entrada'] = pd.to_datetime(df['Data de Entrada'], errors='coerce')
-datas_unicas = sorted(df['Data de Entrada'].dropna().dt.date.unique())
+df['DATA.1'] = pd.to_datetime(df['DATA.1'], dayfirst=True, errors='coerce')
+datas_unicas = df['DATA.1'].dropna().dt.normalize().unique()
+datas_unicas = sorted(datas_unicas)
+datas_formatadas = [pd.to_datetime(d).strftime('%d/%m/%Y') for d in datas_unicas]
+data_str = st.selectbox("Selecione uma data:", datas_formatadas)
+data_filtro = pd.to_datetime(data_str, format='%d/%m/%Y')
+pd.to_datetime(data_str, format='%d/%m/%Y')
+pd.to_datetime(data_str, format='%d/%m/%Y')
+pd.to_datetime(data_str, format='%d/%m/%Y')
 
-data_filtro = st.selectbox("Selecione uma data:", datas_unicas)
-df_filtrado = df[df['Data de Entrada'].dt.date == data_filtro]
+data_filtro = df_filtrado = df[df['DATA.1'].dt.normalize() == data_filtro]
 
 st.markdown(f"<h2 style='color: #2e86c1;'>Total de Atendimentos: {len(df_filtrado)}</h2>", unsafe_allow_html=True)
 
@@ -101,7 +110,7 @@ cards = []
 for _, row in df_filtrado.iterrows():
     card = {
         "nome": row['Nome do Cliente'],
-        "data": row['Data de Entrada'].strftime('%d/%m/%Y') if pd.notnull(row['Data de Entrada']) else '',
+        "data": row['DATA.1'].strftime('%d/%m/%Y') if pd.notnull(row['DATA.1']) else '',
         "os": row['OS'],
         "produto": row['Produto'],
         "fabricante": row['Fabricante'],
