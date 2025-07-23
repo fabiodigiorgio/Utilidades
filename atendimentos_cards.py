@@ -5,9 +5,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 from io import BytesIO
+from datetime import datetime
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
-import textwrap
 import math
 
 # =============================================================
@@ -92,7 +92,7 @@ def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =============================================================
-# FUNÇÕES DE VISUALIZAÇÃO
+# FUNÇÕES DE VISUALIZAÇÃO DE CARDS
 # =============================================================
 CARD_STYLE_BASE = '''
     border:1px solid #ddd;
@@ -124,15 +124,40 @@ def exibir_card(card: dict, container):
     container.markdown(html_card(card), unsafe_allow_html=True)
 
 # =============================================================
-# EXPORTAÇÃO XLSX
+# EXPORTAÇÃO XLSX (openpyxl)
 # =============================================================
-def exportar_xlsx(df_export):
+def exportar_xlsx(df_export, titulo):
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df_export.to_excel(writer, index=False, sheet_name="Atendimentos")
-        for column in df_export:
-            col_idx = df_export.columns.get_loc(column)
-            writer.sheets["Atendimentos"].set_column(col_idx, col_idx, 20)
+        sheet = writer.sheets["Atendimentos"]
+        sheet["A1"] = titulo
+    buffer.seek(0)
+    return buffer
+
+# =============================================================
+# EXPORTAÇÃO PDF TABULAR
+# =============================================================
+def exportar_pdf_tabular(df_export, titulo):
+    buffer = BytesIO()
+    with PdfPages(buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4
+        ax.axis("off")
+        ax.set_title(titulo, fontsize=14, weight="bold", pad=20)
+        df_display = df_export.copy()
+        if "DATA" in df_display.columns:
+            df_display["DATA"] = df_display["DATA"].dt.strftime("%d/%m/%Y")
+        table = ax.table(
+            cellText=df_display.values,
+            colLabels=df_display.columns,
+            cellLoc="left",
+            loc="center"
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1, 1.2)
+        pdf.savefig(fig)
+        plt.close(fig)
     buffer.seek(0)
     return buffer
 
@@ -162,11 +187,33 @@ if termo_busca:
 
 st.markdown(f"<h2 style='color: #2e86c1;'>Total de Atendimentos: {len(df_filtrado)}</h2>", unsafe_allow_html=True)
 
-# Exibição dos cards
+# =====================
+# EXIBIÇÃO DOS CARDS
+# =====================
+st.subheader("Cards de Atendimento")
+page_size = st.selectbox("Cards por página:", [6, 9, 12, 24], index=2)
+total_pages = max(1, math.ceil(len(df_filtrado) / page_size))
+if "page_current" not in st.session_state:
+    st.session_state.page_current = 1
+
+col1, col2, col3 = st.columns([1, 2, 1])
+with col1:
+    if st.button("⬅️ Anterior", disabled=st.session_state.page_current <= 1):
+        st.session_state.page_current -= 1
+with col2:
+    st.write(f"Página {st.session_state.page_current} de {total_pages}")
+with col3:
+    if st.button("Próxima ➡️", disabled=st.session_state.page_current >= total_pages):
+        st.session_state.page_current += 1
+
+start_idx = (st.session_state.page_current - 1) * page_size
+end_idx = start_idx + page_size
+df_page = df_filtrado.iloc[start_idx:end_idx]
+
 cards = []
 cols = st.columns(3)
 col_idx = 0
-for _, row in df_filtrado.iterrows():
+for _, row in df_page.iterrows():
     card = {
         "nome": row["Nome do Cliente"],
         "data": row["DATA"].strftime("%d/%m/%Y") if pd.notnull(row["DATA"]) else "",
@@ -185,19 +232,33 @@ for _, row in df_filtrado.iterrows():
     exibir_card(card, cols[col_idx])
     col_idx = (col_idx + 1) % 3
 
-# =============================================================
-# VISUALIZAÇÃO TABULAR + DOWNLOAD XLSX
-# =============================================================
+# =====================
+# TABELA E EXPORTAÇÕES
+# =====================
 st.markdown("---")
 st.subheader("Visualização Tabular")
-
 df_tabular = df_filtrado[["DATA", "OS", "Nome do Cliente", "Produto", "Fabricante", "Defeito"]].copy()
 st.dataframe(df_tabular)
 
-xlsx_file = exportar_xlsx(df_tabular)
-st.download_button(
-    label="📥 Baixar XLSX",
-    data=xlsx_file,
-    file_name="atendimentos.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+titulo_export = "Relatório de Atendimentos"
+if datas_selecionadas:
+    titulo_export = f"Atendimentos do(s) dia(s): {', '.join(datas_selecionadas)}"
+
+col1, col2 = st.columns(2)
+with col1:
+    xlsx_file = exportar_xlsx(df_tabular, titulo_export)
+    st.download_button(
+        label="📥 Baixar XLSX",
+        data=xlsx_file,
+        file_name="atendimentos.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+with col2:
+    pdf_file = exportar_pdf_tabular(df_tabular, titulo_export)
+    st.download_button(
+        label="📄 Baixar PDF Tabulado",
+        data=pdf_file,
+        file_name="atendimentos.pdf",
+        mime="application/pdf"
+    )
