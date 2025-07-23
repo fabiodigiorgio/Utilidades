@@ -1,16 +1,25 @@
+
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import textwrap
-from matplotlib.backends.backend_pdf import PdfPages
 from io import BytesIO
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.pyplot as plt
+import textwrap
+import math
 
+# =============================================================
+# CONFIGURAÇÃO DA PÁGINA
+# =============================================================
 st.set_page_config(layout="wide", page_title="Atendimentos - Cards")
 st.title("📋 Visualização de Atendimentos")
 
+# =============================================================
+# CARREGAMENTO DA PLANILHA
+# =============================================================
+@st.cache_data(ttl=300, show_spinner="Carregando dados do Google Sheets...")
 def carregar_planilha_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
@@ -19,6 +28,8 @@ def carregar_planilha_google():
     planilha = client.open_by_key("1pdw-vQlg8G69aOXx0ObqO49BGWzK85tpXyJ9gvD6m0Q")
     aba = planilha.worksheet("AGENDAMENTO DOMICILIAR")
     dados = aba.get_all_values()
+    if not dados:
+        return pd.DataFrame()
     headers = dados[0]
     conteudo = dados[1:]
     seen = {}
@@ -33,129 +44,160 @@ def carregar_planilha_google():
     df = pd.DataFrame(conteudo, columns=headers_corrigidos)
     return df
 
-def gerar_pdf(cards):
+# =============================================================
+# PREPARAÇÃO DO DATAFRAME
+# =============================================================
+def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
+    if "DATA" not in df_raw.columns:
+        st.error("A coluna 'DATA' não foi encontrada na planilha.")
+        st.write("Colunas encontradas:", df_raw.columns.tolist())
+        st.stop()
+
+    colunas_necessarias = [
+        "DATA",
+        "ORDEM DE SERVIÇO",
+        "Fabricante",
+        "Produto",
+        "Defeito Relatado",
+        "Nome Completo",
+        "Whatsapp/Celular",
+        "Endereço",
+        "Número",
+        "Bairro/Cidade",
+        "CEP",
+        "Complemento"
+    ]
+
+    faltando = [c for c in colunas_necessarias if c not in df_raw.columns]
+    if faltando:
+        st.warning(f"As seguintes colunas não foram encontradas: {faltando}")
+        colunas_necessarias = [c for c in colunas_necessarias if c in df_raw.columns]
+
+    df = df_raw[colunas_necessarias].copy()
+    df.columns = [
+        "DATA",
+        "OS",
+        "Fabricante",
+        "Produto",
+        "Defeito",
+        "Nome do Cliente",
+        "Contato",
+        "Endereço",
+        "Número",
+        "Bairro",
+        "CEP",
+        "Complemento"
+    ]
+    df["DATA"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
+    return df
+
+# =============================================================
+# FUNÇÕES DE VISUALIZAÇÃO
+# =============================================================
+CARD_STYLE_BASE = '''
+    border:1px solid #ddd;
+    border-radius:8px;
+    padding:15px;
+    margin-bottom:15px;
+    background-color:#f9f9f9;
+    font-size:14px;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+'''
+
+def html_card(card: dict) -> str:
+    return f'''
+    <div style="{CARD_STYLE_BASE}">
+        <h4 style="color:#2e86c1; margin-bottom:5px;">{card["nome"]}</h4>
+        <p><strong>Data:</strong> {card["data"]} &nbsp;|&nbsp; <strong>OS:</strong> {card["os"]}</p>
+        <p><strong>Produto:</strong> {card["produto"]} &nbsp;|&nbsp; <strong>Fabricante:</strong> {card["fabricante"]}</p>
+        <p style="color:#c0392b;"><strong>Defeito:</strong> {card["defeito"]}</p>
+        <p><strong>Endereço:</strong> {card["endereco"]}, Nº {card["numero"]} - {card["bairro"]}</p>
+        <p><strong>CEP:</strong> {card["cep"]} &nbsp;|&nbsp; <strong>Compl.:</strong> {card["complemento"]}</p>
+        <p style="color:#2980b9;"><strong>Contato:</strong> {card["contato"]}</p>
+    </div>
+    '''
+
+def exibir_card(card: dict, container):
+    container.markdown(html_card(card), unsafe_allow_html=True)
+
+# =============================================================
+# EXPORTAÇÃO XLSX
+# =============================================================
+def exportar_xlsx(df_export):
     buffer = BytesIO()
-    with PdfPages(buffer) as pdf:
-        for i in range(0, len(cards), 4):
-            fig, axs = plt.subplots(4, 1, figsize=(8.27, 11.69))  # A4 vertical
-            plt.subplots_adjust(hspace=0.8)
-            for ax, card in zip(axs, cards[i:i+4]):
-                ax.axis('off')
-                y = 1.0
-                lh = 0.045
-                x = 0.05
-                ax.text(x, y, card["nome"], fontsize=12, weight='bold', transform=ax.transAxes); y -= 0.06
-                ax.text(x, y, f"Data: {card['data']}  |  OS: {card['os']}", fontsize=10, transform=ax.transAxes); y -= lh
-                ax.text(x, y, f"Produto: {card['produto']}  |  Fabricante: {card['fabricante']}", fontsize=9, transform=ax.transAxes); y -= lh
-
-                defeito_wrapped = textwrap.fill(f"Defeito: {card['defeito']}", width=85)
-                for line in defeito_wrapped.split('\n'):
-                    ax.text(x, y, line, fontsize=9, color="brown", transform=ax.transAxes)
-                    y -= lh
-
-                endereco = f"Endereço: {card['endereco']}, Nº {card['numero']} - {card['bairro']}"
-                endereco_wrapped = textwrap.fill(endereco, width=85)
-                for line in endereco_wrapped.split('\n'):
-                    ax.text(x, y, line, fontsize=9, transform=ax.transAxes)
-                    y -= lh
-
-                ax.text(x, y, f"CEP: {card['cep']}  |  Compl: {card['complemento']}", fontsize=9, transform=ax.transAxes); y -= lh
-                ax.text(x, y, f"Contato: {card['contato']}", fontsize=9, color="blue", transform=ax.transAxes)
-            pdf.savefig(fig)
-            plt.close()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Atendimentos")
+        for column in df_export:
+            col_idx = df_export.columns.get_loc(column)
+            writer.sheets["Atendimentos"].set_column(col_idx, col_idx, 20)
     buffer.seek(0)
     return buffer
 
+# =============================================================
+# MAIN
+# =============================================================
 try:
     df_raw = carregar_planilha_google()
 except Exception as e:
-    st.error(f"Erro ao carregar dados do Google Sheets: {e}")
+    st.error(f"Erro ao carregar dados: {e}")
     st.stop()
 
-coluna_data_entrada = next((col for col in df_raw.columns if col.strip().upper() == "DATA"), None)
-if coluna_data_entrada is None:
-    st.error("A coluna 'DATA' não foi encontrada.")
-    st.stop()
-colunas_esperadas = [
-    coluna_data_entrada, 'ORDEM DE SERVIÇO', 'Fabricante', 'Produto', 'Defeito Relatado',
-    'Nome Completo', 'Whatsapp/Celular', 'Endereço', 'Número', 'Bairro/Cidade', 'CEP', 'Complemento'
-]
-
-colunas_faltando = [col for col in colunas_esperadas if col not in df_raw.columns]
-if colunas_faltando:
-    st.error(f"As seguintes colunas esperadas não foram encontradas: {colunas_faltando}")
+if df_raw.empty:
+    st.warning("Planilha vazia ou não lida.")
     st.stop()
 
-df = df_raw[colunas_esperadas].copy()
-df.columns = [
-    'DATA.1', 'OS', 'Fabricante', 'Produto', 'Defeito',
-    'Nome do Cliente', 'Contato', 'Endereço', 'Número', 'Bairro',
-    'CEP', 'Complemento'
-]
-df['DATA.1'] = pd.to_datetime(df['DATA.1'], dayfirst=True, errors='coerce')
-datas_unicas = df['DATA.1'].dropna().dt.normalize().unique()
-datas_unicas = sorted(datas_unicas)
-datas_formatadas = [pd.to_datetime(d).strftime('%d/%m/%Y') for d in datas_unicas]
-data_str = st.selectbox("Selecione uma data:", datas_formatadas)
-data_filtro = pd.to_datetime(data_str, format='%d/%m/%Y')
-pd.to_datetime(data_str, format='%d/%m/%Y')
-pd.to_datetime(data_str, format='%d/%m/%Y')
-pd.to_datetime(data_str, format='%d/%m/%Y')
+df = preparar_dataframe(df_raw)
 
-data_filtro = df_filtrado = df[df['DATA.1'].dt.normalize() == data_filtro]
+datas_unicas = sorted(df["DATA"].dropna().dt.normalize().unique())
+datas_formatadas = [pd.to_datetime(d).strftime("%d/%m/%Y") for d in datas_unicas]
+datas_selecionadas = st.multiselect("Selecione as datas:", datas_formatadas)
+df_filtrado = df[df["DATA"].dt.strftime("%d/%m/%Y").isin(datas_selecionadas)] if datas_selecionadas else df.copy()
+
+termo_busca = st.text_input("Buscar por Nome ou OS:")
+if termo_busca:
+    df_filtrado = df_filtrado[df_filtrado.apply(lambda row: termo_busca.lower() in str(row).lower(), axis=1)]
 
 st.markdown(f"<h2 style='color: #2e86c1;'>Total de Atendimentos: {len(df_filtrado)}</h2>", unsafe_allow_html=True)
 
+# Exibição dos cards
 cards = []
+cols = st.columns(3)
+col_idx = 0
 for _, row in df_filtrado.iterrows():
     card = {
-        "nome": row['Nome do Cliente'],
-        "data": row['DATA.1'].strftime('%d/%m/%Y') if pd.notnull(row['DATA.1']) else '',
-        "os": row['OS'],
-        "produto": row['Produto'],
-        "fabricante": row['Fabricante'],
-        "defeito": row['Defeito'],
-        "endereco": row['Endereço'],
-        "numero": row['Número'],
-        "bairro": row['Bairro'],
-        "cep": row['CEP'],
-        "complemento": row['Complemento'],
-        "contato": row['Contato']
+        "nome": row["Nome do Cliente"],
+        "data": row["DATA"].strftime("%d/%m/%Y") if pd.notnull(row["DATA"]) else "",
+        "os": row["OS"],
+        "produto": row["Produto"],
+        "fabricante": row["Fabricante"],
+        "defeito": row["Defeito"],
+        "endereco": row["Endereço"],
+        "numero": row["Número"],
+        "bairro": row["Bairro"],
+        "cep": row["CEP"],
+        "complemento": row["Complemento"],
+        "contato": row["Contato"]
     }
     cards.append(card)
+    exibir_card(card, cols[col_idx])
+    col_idx = (col_idx + 1) % 3
 
-    # Exibir na tela (mantendo características anteriores)
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axis('off')
-    y = 0.90
-    lh = 0.045
-    x = 0.05
+# =============================================================
+# VISUALIZAÇÃO TABULAR + DOWNLOAD XLSX
+# =============================================================
+st.markdown("---")
+st.subheader("Visualização Tabular")
 
-    ax.text(x, y, card["nome"], fontsize=14, fontweight='bold', color="#222", transform=ax.transAxes)
-    y -= 0.06
-    ax.text(x, y, f"Data: {card['data']}  |  OS: {card['os']}", fontsize=11, color="#333", transform=ax.transAxes)
-    y -= lh
-    ax.text(x, y, f"Produto: {card['produto']}  |  Fabricante: {card['fabricante']}", fontsize=10, transform=ax.transAxes)
-    y -= lh
+df_tabular = df_filtrado[["DATA", "OS", "Nome do Cliente", "Produto", "Fabricante", "Defeito"]].copy()
+st.dataframe(df_tabular)
 
-    defeito_wrapped = textwrap.fill(f"Defeito: {card['defeito']}", width=85)
-    for linha in defeito_wrapped.split("\n"):
-        ax.text(x, y, linha, fontsize=10, color="#cc0000", transform=ax.transAxes)
-        y -= lh
-
-    endereco_completo = f"Endereço: {card['endereco']}, Nº {card['numero']} - {card['bairro']}"
-    wrapped_endereco = textwrap.fill(endereco_completo, width=85)
-    for linha in wrapped_endereco.split("\n"):
-        ax.text(x, y, linha, fontsize=10, transform=ax.transAxes)
-        y -= lh
-
-    ax.text(x, y, f"CEP: {card['cep']}  |  Compl: {card['complemento']}", fontsize=10, transform=ax.transAxes)
-    y -= lh
-    ax.text(x, y, f"Contato:  {card['contato']}", fontsize=10, color="#336699", transform=ax.transAxes)
-    st.pyplot(fig)
-    st.markdown("---")
-
-# Botão para exportar PDF
-if st.button("📄 Exportar PDF com 4 cards por página"):
-    pdf_file = gerar_pdf(cards)
-    st.download_button(label="📥 Baixar PDF", data=pdf_file, file_name="atendimentos_cards.pdf", mime="application/pdf")
+xlsx_file = exportar_xlsx(df_tabular)
+st.download_button(
+    label="📥 Baixar XLSX",
+    data=xlsx_file,
+    file_name="atendimentos.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
