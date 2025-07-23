@@ -5,9 +5,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 from io import BytesIO
-from datetime import datetime
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
+import textwrap
+import math
 
 # =============================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -91,42 +92,47 @@ def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =============================================================
-# EXPORTAÇÃO XLSX (usando openpyxl)
+# FUNÇÕES DE VISUALIZAÇÃO
 # =============================================================
-def exportar_xlsx_openpyxl(df_export, titulo):
+CARD_STYLE_BASE = '''
+    border:1px solid #ddd;
+    border-radius:8px;
+    padding:15px;
+    margin-bottom:15px;
+    background-color:#f9f9f9;
+    font-size:14px;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+'''
+
+def html_card(card: dict) -> str:
+    return f'''
+    <div style="{CARD_STYLE_BASE}">
+        <h4 style="color:#2e86c1; margin-bottom:5px;">{card["nome"]}</h4>
+        <p><strong>Data:</strong> {card["data"]} &nbsp;|&nbsp; <strong>OS:</strong> {card["os"]}</p>
+        <p><strong>Produto:</strong> {card["produto"]} &nbsp;|&nbsp; <strong>Fabricante:</strong> {card["fabricante"]}</p>
+        <p style="color:#c0392b;"><strong>Defeito:</strong> {card["defeito"]}</p>
+        <p><strong>Endereço:</strong> {card["endereco"]}, Nº {card["numero"]} - {card["bairro"]}</p>
+        <p><strong>CEP:</strong> {card["cep"]} &nbsp;|&nbsp; <strong>Compl.:</strong> {card["complemento"]}</p>
+        <p style="color:#2980b9;"><strong>Contato:</strong> {card["contato"]}</p>
+    </div>
+    '''
+
+def exibir_card(card: dict, container):
+    container.markdown(html_card(card), unsafe_allow_html=True)
+
+# =============================================================
+# EXPORTAÇÃO XLSX
+# =============================================================
+def exportar_xlsx(df_export):
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df_export.to_excel(writer, index=False, sheet_name="Atendimentos")
-        worksheet = writer.sheets["Atendimentos"]
-        worksheet["A1"] = titulo
-    buffer.seek(0)
-    return buffer
-
-# =============================================================
-# EXPORTAÇÃO PDF
-# =============================================================
-def exportar_pdf_tabular(df_export, titulo):
-    buffer = BytesIO()
-    with PdfPages(buffer) as pdf:
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4
-        ax.axis("off")
-
-        ax.set_title(titulo, fontsize=14, weight="bold", pad=20)
-        df_display = df_export.copy()
-        if "DATA" in df_display.columns:
-            df_display["DATA"] = df_display["DATA"].dt.strftime("%d/%m/%Y")
-
-        table = ax.table(
-            cellText=df_display.values,
-            colLabels=df_display.columns,
-            cellLoc="left",
-            loc="center"
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1, 1.2)
-        pdf.savefig(fig)
-        plt.close(fig)
+        for column in df_export:
+            col_idx = df_export.columns.get_loc(column)
+            writer.sheets["Atendimentos"].set_column(col_idx, col_idx, 20)
     buffer.seek(0)
     return buffer
 
@@ -156,31 +162,42 @@ if termo_busca:
 
 st.markdown(f"<h2 style='color: #2e86c1;'>Total de Atendimentos: {len(df_filtrado)}</h2>", unsafe_allow_html=True)
 
+# Exibição dos cards
+cards = []
+cols = st.columns(3)
+col_idx = 0
+for _, row in df_filtrado.iterrows():
+    card = {
+        "nome": row["Nome do Cliente"],
+        "data": row["DATA"].strftime("%d/%m/%Y") if pd.notnull(row["DATA"]) else "",
+        "os": row["OS"],
+        "produto": row["Produto"],
+        "fabricante": row["Fabricante"],
+        "defeito": row["Defeito"],
+        "endereco": row["Endereço"],
+        "numero": row["Número"],
+        "bairro": row["Bairro"],
+        "cep": row["CEP"],
+        "complemento": row["Complemento"],
+        "contato": row["Contato"]
+    }
+    cards.append(card)
+    exibir_card(card, cols[col_idx])
+    col_idx = (col_idx + 1) % 3
+
+# =============================================================
+# VISUALIZAÇÃO TABULAR + DOWNLOAD XLSX
+# =============================================================
 st.markdown("---")
 st.subheader("Visualização Tabular")
 
 df_tabular = df_filtrado[["DATA", "OS", "Nome do Cliente", "Produto", "Fabricante", "Defeito"]].copy()
 st.dataframe(df_tabular)
 
-titulo_export = "Relatório de Atendimentos"
-if datas_selecionadas:
-    titulo_export = f"Atendimentos do(s) dia(s): {', '.join(datas_selecionadas)}"
-
-col1, col2 = st.columns(2)
-with col1:
-    xlsx_file = exportar_xlsx_openpyxl(df_tabular, titulo_export)
-    st.download_button(
-        label="📥 Baixar XLSX",
-        data=xlsx_file,
-        file_name="atendimentos.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-with col2:
-    pdf_file = exportar_pdf_tabular(df_tabular, titulo_export)
-    st.download_button(
-        label="📄 Baixar PDF Tabulado",
-        data=pdf_file,
-        file_name="atendimentos.pdf",
-        mime="application/pdf"
-    )
+xlsx_file = exportar_xlsx(df_tabular)
+st.download_button(
+    label="📥 Baixar XLSX",
+    data=xlsx_file,
+    file_name="atendimentos.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
