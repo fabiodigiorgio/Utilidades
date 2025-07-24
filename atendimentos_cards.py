@@ -10,15 +10,43 @@ from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import math
 
-# =============================================================
-# CONFIGURAÇÃO DA PÁGINA
-# =============================================================
 st.set_page_config(layout="wide", page_title="Atendimentos - Cards")
+st.markdown("""
+    <style>
+        body {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            background-color: #ffffff;
+            font-size: 14px;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            color: #000000;
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+        .card h4 {
+            color: #2e86c1;
+            margin-bottom: 5px;
+        }
+        .card .defeito {
+            color: #c0392b;
+        }
+        .card .contato {
+            color: #2980b9;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("📋 Visualização de Atendimentos")
 
-# =============================================================
-# CARREGAMENTO DA PLANILHA
-# =============================================================
 @st.cache_data(ttl=300, show_spinner="Carregando dados do Google Sheets...")
 def carregar_planilha_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -44,9 +72,6 @@ def carregar_planilha_google():
     df = pd.DataFrame(conteudo, columns=headers_corrigidos)
     return df
 
-# =============================================================
-# PREPARAÇÃO DO DATAFRAME
-# =============================================================
 def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     if "DATA" not in df_raw.columns:
         st.error("A coluna 'DATA' não foi encontrada na planilha.")
@@ -54,20 +79,10 @@ def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         st.stop()
 
     colunas_necessarias = [
-        "DATA",
-        "ORDEM DE SERVIÇO",
-        "Fabricante",
-        "Produto",
-        "Defeito Relatado",
-        "Nome Completo",
-        "Whatsapp/Celular",
-        "Endereço",
-        "Número",
-        "Bairro/Cidade",
-        "CEP",
-        "Complemento"
+        "DATA", "ORDEM DE SERVIÇO", "Fabricante", "Produto", "Defeito Relatado",
+        "Nome Completo", "Whatsapp/Celular", "Endereço", "Número", "Bairro/Cidade",
+        "CEP", "Complemento"
     ]
-
     faltando = [c for c in colunas_necessarias if c not in df_raw.columns]
     if faltando:
         st.warning(f"As seguintes colunas não foram encontradas: {faltando}")
@@ -75,91 +90,27 @@ def preparar_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     df = df_raw[colunas_necessarias].copy()
     df.columns = [
-        "DATA",
-        "OS",
-        "Fabricante",
-        "Produto",
-        "Defeito",
-        "Nome do Cliente",
-        "Contato",
-        "Endereço",
-        "Número",
-        "Bairro",
-        "CEP",
-        "Complemento"
+        "DATA", "OS", "Fabricante", "Produto", "Defeito", "Nome do Cliente",
+        "Contato", "Endereço", "Número", "Bairro", "CEP", "Complemento"
     ]
     df["DATA"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
     return df
 
-# =============================================================
-# FUNÇÕES DE VISUALIZAÇÃO DE CARDS
-# =============================================================
-CARD_STYLE_BASE = '''
-    border:1px solid #ddd;
-    border-radius:8px;
-    padding:15px;
-    margin-bottom:15px;
-    background-color:#f9f9f9;
-    font-size:14px;
-    min-height: 300px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-'''
-
 def html_card(card: dict) -> str:
     return f'''
-    <div style="{CARD_STYLE_BASE}">
-        <h4 style="color:#2e86c1; margin-bottom:5px;">{card["nome"]}</h4>
-        <p><strong>Data:</strong> {card["data"]} &nbsp;|&nbsp; <strong>OS:</strong> {card["os"]}</p>
-        <p><strong>Produto:</strong> {card["produto"]} &nbsp;|&nbsp; <strong>Fabricante:</strong> {card["fabricante"]}</p>
-        <p style="color:#c0392b;"><strong>Defeito:</strong> {card["defeito"]}</p>
-        <p><strong>Endereço:</strong> {card["endereco"]}, Nº {card["numero"]} - {card["bairro"]}</p>
-        <p><strong>CEP:</strong> {card["cep"]} &nbsp;|&nbsp; <strong>Compl.:</strong> {card["complemento"]}</p>
-        <p style="color:#2980b9;"><strong>Contato:</strong> {card["contato"]}</p>
+    <div class="card">
+        <h4>{card["nome"]}</h4>
+        <p><strong>Data:</strong> {card["data"]}<br><strong>OS:</strong> {card["os"]}</p>
+        <p><strong>Produto:</strong> {card["produto"]}<br><strong>Fabricante:</strong> {card["fabricante"]}</p>
+        <p class="defeito"><strong>Defeito:</strong> {card["defeito"]}</p>
+        <p><strong>Endereço:</strong> {card["endereco"]}, Nº {card["numero"]}<br>{card["bairro"]}</p>
+        <p><strong>CEP:</strong> {card["cep"]}<br><strong>Compl.:</strong> {card["complemento"]}</p>
+        <p class="contato"><strong>Contato:</strong> {card["contato"]}</p>
     </div>
     '''
 
 def exibir_card(card: dict, container):
     container.markdown(html_card(card), unsafe_allow_html=True)
-
-# =============================================================
-# EXPORTAÇÃO XLSX (openpyxl)
-# =============================================================
-def exportar_xlsx(df_export, titulo):
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_export.to_excel(writer, index=False, sheet_name="Atendimentos")
-        sheet = writer.sheets["Atendimentos"]
-        sheet["A1"] = titulo
-    buffer.seek(0)
-    return buffer
-
-# =============================================================
-# EXPORTAÇÃO PDF TABULAR
-# =============================================================
-def exportar_pdf_tabular(df_export, titulo):
-    buffer = BytesIO()
-    with PdfPages(buffer) as pdf:
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4
-        ax.axis("off")
-        ax.set_title(titulo, fontsize=14, weight="bold", pad=20)
-        df_display = df_export.copy()
-        if "DATA" in df_display.columns:
-            df_display["DATA"] = df_display["DATA"].dt.strftime("%d/%m/%Y")
-        table = ax.table(
-            cellText=df_display.values,
-            colLabels=df_display.columns,
-            cellLoc="left",
-            loc="center"
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1, 1.2)
-        pdf.savefig(fig)
-        plt.close(fig)
-    buffer.seek(0)
-    return buffer
 
 # =============================================================
 # MAIN
@@ -239,6 +190,38 @@ st.markdown("---")
 st.subheader("Visualização Tabular")
 df_tabular = df_filtrado[["DATA", "OS", "Nome do Cliente", "Produto", "Fabricante", "Defeito"]].copy()
 st.dataframe(df_tabular)
+
+def exportar_xlsx(df_export, titulo):
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Atendimentos")
+        sheet = writer.sheets["Atendimentos"]
+        sheet["A1"] = titulo
+    buffer.seek(0)
+    return buffer
+
+def exportar_pdf_tabular(df_export, titulo):
+    buffer = BytesIO()
+    with PdfPages(buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4
+        ax.axis("off")
+        ax.set_title(titulo, fontsize=14, weight="bold", pad=20)
+        df_display = df_export.copy()
+        if "DATA" in df_display.columns:
+            df_display["DATA"] = df_display["DATA"].dt.strftime("%d/%m/%Y")
+        table = ax.table(
+            cellText=df_display.values,
+            colLabels=df_display.columns,
+            cellLoc="left",
+            loc="center"
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1, 1.2)
+        pdf.savefig(fig)
+        plt.close(fig)
+    buffer.seek(0)
+    return buffer
 
 titulo_export = "Relatório de Atendimentos"
 if datas_selecionadas:
